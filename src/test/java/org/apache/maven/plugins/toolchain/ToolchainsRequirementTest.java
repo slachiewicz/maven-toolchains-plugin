@@ -19,30 +19,28 @@
 package org.apache.maven.plugins.toolchain;
 
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.maven.api.xml.XmlNode;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ToolchainsRequirementTest {
+
+    private static ToolchainsRequirement requirement() {
+        XmlNode jdk = XmlNode.newInstance("jdk", List.of(XmlNode.newInstance("version", "17")));
+        return ToolchainsRequirement.fromXmlNode(XmlNode.newInstance("toolchains", List.of(jdk)));
+    }
+
     @Test
     void returnsEmptyParamsForUnknownType() {
-        ToolchainsRequirement requirement = new ToolchainsRequirement();
-        Map<String, Map<String, String>> toolchains = new HashMap<>();
-        toolchains.put("jdk", Collections.singletonMap("version", "17"));
-        requirement.toolchains = toolchains;
-
-        assertEquals(Collections.emptyMap(), requirement.getParams("nonexistent"));
+        assertEquals(Collections.emptyMap(), requirement().getParams("nonexistent"));
     }
 
     @Test
     void returnsConfiguredParamsForKnownType() {
-        ToolchainsRequirement requirement = new ToolchainsRequirement();
-        Map<String, String> params = Collections.singletonMap("version", "17");
-        requirement.toolchains = Collections.singletonMap("jdk", params);
-
-        assertEquals(params, requirement.getParams("jdk"));
+        assertEquals(Map.of("version", "17"), requirement().getParams("jdk"));
     }
 }

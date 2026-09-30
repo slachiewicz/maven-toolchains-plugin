@@ -18,7 +18,7 @@
  */
 package org.apache.maven.plugins.toolchains.its.custom;
 
-import org.apache.maven.toolchain.Toolchain;
+import org.apache.maven.api.Toolchain;
 
 /**
  * @author Hervé Boutemy

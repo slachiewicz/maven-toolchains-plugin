@@ -18,9 +18,6 @@
  */
 package org.apache.maven.plugins.toolchain.jdk;
 
-import javax.inject.Named;
-import javax.inject.Singleton;
-
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -44,12 +41,15 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.apache.maven.toolchain.model.PersistedToolchains;
-import org.apache.maven.toolchain.model.ToolchainModel;
-import org.apache.maven.toolchain.model.io.xpp3.MavenToolchainsXpp3Reader;
-import org.apache.maven.toolchain.model.io.xpp3.MavenToolchainsXpp3Writer;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
-import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.di.Named;
+import org.apache.maven.api.di.Singleton;
+import org.apache.maven.api.services.xml.ToolchainsXmlFactory;
+import org.apache.maven.api.services.xml.XmlReaderException;
+import org.apache.maven.api.services.xml.XmlWriterException;
+import org.apache.maven.api.toolchain.PersistedToolchains;
+import org.apache.maven.api.toolchain.ToolchainModel;
+import org.apache.maven.api.xml.XmlNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -95,6 +95,13 @@ public class ToolchainDiscoverer {
     private volatile boolean cacheModified;
     private volatile Set<Path> foundJdks;
 
+    private final ToolchainsXmlFactory toolchainsXmlFactory;
+
+    @Inject
+    public ToolchainDiscoverer(ToolchainsXmlFactory toolchainsXmlFactory) {
+        this.toolchainsXmlFactory = toolchainsXmlFactory;
+    }
+
     /**
      * Build the model for the current JDK toolchain
      */
@@ -104,21 +111,15 @@ public class ToolchainDiscoverer {
             // in case the current JVM is not a JDK
             return Optional.empty();
         }
-        ToolchainModel model = new ToolchainModel();
-        model.setType(TOOLCHAIN_TYPE_JDK);
+        Map<String, String> provides = new LinkedHashMap<>();
         Stream.of(PROPERTIES).forEach(k -> {
             String v = System.getProperty(JAVA + k);
             if (v != null) {
-                model.addProvide(k, v);
+                provides.put(k, v);
             }
         });
-        model.addProvide(CURRENT, "true");
-        Xpp3Dom config = new Xpp3Dom("configuration");
-        Xpp3Dom jdkHome = new Xpp3Dom(JDK_HOME);
-        jdkHome.setValue(currentJdkHome.toString());
-        config.addChild(jdkHome);
-        model.setConfiguration(config);
-        return Optional.of(model);
+        provides.put(CURRENT, "true");
+        return Optional.of(newModel(provides, currentJdkHome));
     }
 
     public PersistedToolchains discoverToolchains() {
@@ -153,27 +154,24 @@ public class ToolchainDiscoverer {
                         if (tc == null) {
                             return Stream.empty();
                         }
-                        flags.getOrDefault(s, Collections.emptyMap())
-                                .forEach((k, v) -> tc.getProvides().setProperty(k, v));
-                        String version = tc.getProvides().getProperty(VERSION);
-                        if (isLts(version)) {
-                            tc.getProvides().setProperty(LTS, "true");
+                        Map<String, String> provides = new LinkedHashMap<>(tc.getProvides());
+                        provides.putAll(flags.getOrDefault(s, Collections.emptyMap()));
+                        if (isLts(provides.get(VERSION))) {
+                            provides.put(LTS, "true");
                         }
-                        return Stream.of(tc);
+                        return Stream.of(tc.withProvides(provides));
                     })
                     .sorted(getToolchainModelComparator(comparator))
                     .collect(Collectors.toList());
             writeCache();
-            PersistedToolchains ps = new PersistedToolchains();
-            ps.setToolchains(tcs);
-            return ps;
+            return PersistedToolchains.newBuilder().toolchains(tcs).build();
         } catch (Exception e) {
             if (log.isDebugEnabled()) {
                 log.warn("Error discovering toolchains: " + e, e);
             } else {
                 log.warn("Error discovering toolchains (enable debug level for more information): " + e);
             }
-            return new PersistedToolchains();
+            return PersistedToolchains.newInstance();
         }
     }
 
@@ -190,7 +188,7 @@ public class ToolchainDiscoverer {
                 Path cacheFile = getCacheFile();
                 if (Files.isRegularFile(cacheFile)) {
                     try (Reader r = Files.newBufferedReader(cacheFile)) {
-                        PersistedToolchains pt = new MavenToolchainsXpp3Reader().read(r, false);
+                        PersistedToolchains pt = toolchainsXmlFactory.read(r, false);
                         cache = pt.getToolchains().stream()
                                 // Remove stale entries
                                 .filter(tc -> {
@@ -205,7 +203,7 @@ public class ToolchainDiscoverer {
                                 .collect(Collectors.toConcurrentMap(this::getJdkHome, Function.identity()));
                     }
                 }
-            } catch (IOException | XmlPullParserException e) {
+            } catch (IOException | XmlReaderException e) {
                 log.debug("Error reading toolchains cache: " + e, e);
             }
         }
@@ -217,20 +215,21 @@ public class ToolchainDiscoverer {
                 Path cacheFile = getCacheFile();
                 Files.createDirectories(cacheFile.getParent());
                 try (Writer w = Files.newBufferedWriter(cacheFile)) {
-                    PersistedToolchains pt = new PersistedToolchains();
-                    pt.setToolchains(cache.values().stream()
-                            .map(tc -> {
-                                ToolchainModel model = tc.clone();
-                                // Remove transient information
-                                model.getProvides().remove(CURRENT);
-                                model.getProvides().remove(ENV);
-                                return model;
-                            })
-                            .sorted(version().thenComparing(vendor()))
-                            .collect(Collectors.toList()));
-                    new MavenToolchainsXpp3Writer().write(w, pt);
+                    PersistedToolchains pt = PersistedToolchains.newBuilder()
+                            .toolchains(cache.values().stream()
+                                    .map(tc -> {
+                                        // Remove transient information
+                                        Map<String, String> provides = new LinkedHashMap<>(tc.getProvides());
+                                        provides.remove(CURRENT);
+                                        provides.remove(ENV);
+                                        return tc.withProvides(provides);
+                                    })
+                                    .sorted(version().thenComparing(vendor()))
+                                    .collect(Collectors.toList()))
+                            .build();
+                    toolchainsXmlFactory.write(pt, w);
                 }
-            } catch (IOException e) {
+            } catch (IOException | XmlWriterException e) {
                 log.debug("Error writing toolchains cache: " + e, e);
             }
             cacheModified = false;
@@ -254,9 +253,9 @@ public class ToolchainDiscoverer {
     }
 
     public Path getJdkHome(ToolchainModel toolchain) {
-        Xpp3Dom dom = (Xpp3Dom) toolchain.getConfiguration();
-        Xpp3Dom javahome = dom != null ? dom.getChild(JDK_HOME) : null;
-        String jdk = javahome != null ? javahome.getValue() : null;
+        XmlNode dom = toolchain.getConfiguration();
+        XmlNode javahome = dom != null ? dom.child(JDK_HOME) : null;
+        String jdk = javahome != null ? javahome.value() : null;
         return Paths.get(Objects.requireNonNull(jdk));
     }
 
@@ -306,15 +305,16 @@ public class ToolchainDiscoverer {
             return null;
         }
 
-        ToolchainModel model = new ToolchainModel();
-        model.setType(TOOLCHAIN_TYPE_JDK);
-        properties.forEach(model::addProvide);
-        Xpp3Dom configuration = new Xpp3Dom("configuration");
-        Xpp3Dom jdkHome = new Xpp3Dom(JDK_HOME);
-        jdkHome.setValue(jdk.toString());
-        configuration.addChild(jdkHome);
-        model.setConfiguration(configuration);
-        return model;
+        return newModel(properties, jdk);
+    }
+
+    private static ToolchainModel newModel(Map<String, String> provides, Path jdkHome) {
+        return ToolchainModel.newBuilder()
+                .type(TOOLCHAIN_TYPE_JDK)
+                .provides(provides)
+                .configuration(XmlNode.newInstance(
+                        "configuration", List.of(XmlNode.newInstance(JDK_HOME, jdkHome.toString()))))
+                .build();
     }
 
     private static Path getCanonicalPath(Path path) {
@@ -356,7 +356,7 @@ public class ToolchainDiscoverer {
     }
 
     Comparator<ToolchainModel> vendor() {
-        return comparing((ToolchainModel tc) -> tc.getProvides().getProperty(VENDOR));
+        return comparing((ToolchainModel tc) -> tc.getProvides().get(VENDOR));
     }
 
     Comparator<ToolchainModel> env() {
@@ -368,7 +368,7 @@ public class ToolchainDiscoverer {
     }
 
     Comparator<ToolchainModel> version() {
-        return comparing((ToolchainModel tc) -> tc.getProvides().getProperty(VERSION), (v1, v2) -> {
+        return comparing((ToolchainModel tc) -> tc.getProvides().get(VERSION), (v1, v2) -> {
                     String[] a = v1.split("\\.");
                     String[] b = v2.split("\\.");
                     int length = Math.min(a.length, b.length);

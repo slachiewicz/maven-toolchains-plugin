@@ -18,29 +18,25 @@
  */
 package org.apache.maven.plugins.toolchain.jdk;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Stream;
 
-import org.apache.maven.execution.MavenSession;
-import org.apache.maven.plugin.AbstractMojo;
-import org.apache.maven.plugin.MojoFailureException;
-import org.apache.maven.plugins.annotations.LifecyclePhase;
-import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.toolchain.MisconfiguredToolchainException;
-import org.apache.maven.toolchain.RequirementMatcherFactory;
-import org.apache.maven.toolchain.ToolchainFactory;
-import org.apache.maven.toolchain.ToolchainManagerPrivate;
-import org.apache.maven.toolchain.ToolchainPrivate;
-import org.apache.maven.toolchain.model.PersistedToolchains;
-import org.apache.maven.toolchain.model.ToolchainModel;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.apache.maven.api.Session;
+import org.apache.maven.api.Toolchain;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.plugin.Log;
+import org.apache.maven.api.plugin.Mojo;
+import org.apache.maven.api.plugin.MojoException;
+import org.apache.maven.api.plugin.annotations.Parameter;
+import org.apache.maven.api.services.ToolchainManager;
+import org.apache.maven.api.services.ToolchainManagerException;
+import org.apache.maven.api.toolchain.PersistedToolchains;
+import org.apache.maven.api.toolchain.ToolchainModel;
 
 import static org.apache.maven.plugins.toolchain.jdk.ToolchainDiscoverer.ENV;
 import static org.apache.maven.plugins.toolchain.jdk.ToolchainDiscoverer.RUNTIME_NAME;
@@ -53,8 +49,8 @@ import static org.apache.maven.plugins.toolchain.jdk.ToolchainDiscoverer.VERSION
  *
  * @since 3.2.0
  */
-@Mojo(name = "select-jdk-toolchain", defaultPhase = LifecyclePhase.VALIDATE)
-public class SelectJdkToolchainMojo extends AbstractMojo {
+@org.apache.maven.api.plugin.annotations.Mojo(name = "select-jdk-toolchain", defaultPhase = "validate")
+public class SelectJdkToolchainMojo implements Mojo {
 
     public static final String TOOLCHAIN_TYPE_JDK = "jdk";
 
@@ -133,24 +129,14 @@ public class SelectJdkToolchainMojo extends AbstractMojo {
     @Parameter(property = "toolchain.jdk.comparator", defaultValue = "lts,current,env,version,vendor")
     private String comparator;
 
-    /**
-     * Toolchain manager
-     */
     @Inject
-    private ToolchainManagerPrivate toolchainManager;
-
-    /**
-     * Toolchain factory
-     */
-    @Inject
-    @Named(TOOLCHAIN_TYPE_JDK)
-    ToolchainFactory factory;
+    private Log log;
 
     /**
      * The current build session instance. This is used for toolchain manager API calls.
      */
     @Inject
-    private MavenSession session;
+    private Session session;
 
     /**
      * Toolchain discoverer
@@ -159,15 +145,17 @@ public class SelectJdkToolchainMojo extends AbstractMojo {
     ToolchainDiscoverer discoverer;
 
     @Override
-    public void execute() throws MojoFailureException {
+    public void execute() throws MojoException {
         try {
             doExecute();
-        } catch (MisconfiguredToolchainException e) {
-            throw new MojoFailureException("Unable to select toolchain: " + e, e);
+        } catch (ToolchainManagerException e) {
+            throw new MojoException("Unable to select toolchain: " + e, e);
         }
     }
 
-    private void doExecute() throws MisconfiguredToolchainException, MojoFailureException {
+    private void doExecute() throws MojoException {
+        ToolchainManager toolchainManager = session.getService(ToolchainManager.class);
+
         if (version == null && runtimeName == null && runtimeVersion == null && vendor == null && env == null) {
             return;
         }
@@ -181,40 +169,40 @@ public class SelectJdkToolchainMojo extends AbstractMojo {
 
         ToolchainModel currentJdkToolchainModel =
                 discoverer.getCurrentJdkToolchain().orElse(null);
-        ToolchainPrivate currentJdkToolchain =
-                currentJdkToolchainModel != null ? factory.createToolchain(currentJdkToolchainModel) : null;
+        Toolchain currentJdkToolchain =
+                currentJdkToolchainModel != null ? new JdkToolchain(currentJdkToolchainModel) : null;
 
         if (useJdk == JdkMode.IfMatch && currentJdkToolchain != null && matches(currentJdkToolchain, requirements)) {
-            getLog().info("Not using an external toolchain as the current JDK '" + currentJdkToolchain
+            log.info("Not using an external toolchain as the current JDK '" + currentJdkToolchain
                     + "' matches the requirements.");
             return;
         }
 
-        ToolchainPrivate toolchain = Stream.of(toolchainManager.getToolchainsForType(TOOLCHAIN_TYPE_JDK, session))
+        Toolchain toolchain = toolchainManager.getToolchains(session, TOOLCHAIN_TYPE_JDK).stream()
                 .filter(tc -> matches(tc, requirements))
                 .findFirst()
                 .orElse(null);
         if (toolchain != null) {
-            getLog().info("Found matching JDK toolchain: " + toolchain);
+            log.info("Found matching JDK toolchain: " + toolchain);
         }
 
         if (toolchain == null && discoverToolchains) {
-            getLog().debug("No matching toolchains configured, trying to discover JDK toolchains");
+            log.debug("No matching toolchains configured, trying to discover JDK toolchains");
             PersistedToolchains persistedToolchains = discoverer.discoverToolchains(comparator);
-            getLog().debug("Discovered " + persistedToolchains.getToolchains().size() + " JDK toolchains");
+            log.debug("Discovered " + persistedToolchains.getToolchains().size() + " JDK toolchains");
 
             for (ToolchainModel tcm : persistedToolchains.getToolchains()) {
-                ToolchainPrivate tc = factory.createToolchain(tcm);
-                if (tc != null && matches(tc, requirements)) {
+                Toolchain tc = new JdkToolchain(tcm);
+                if (matches(tc, requirements)) {
                     toolchain = tc;
-                    getLog().info("Discovered matching JDK toolchain: " + toolchain);
+                    log.info("Discovered matching JDK toolchain: " + toolchain);
                     break;
                 }
             }
         }
 
         if (toolchain == null) {
-            throw new MojoFailureException(
+            throw new MojoException(
                     "Cannot find matching toolchain definitions for the following toolchain types:" + requirements
                             + System.lineSeparator()
                             + "Define the required toolchains in your ~/.m2/toolchains.xml file.");
@@ -223,27 +211,27 @@ public class SelectJdkToolchainMojo extends AbstractMojo {
         if (useJdk == JdkMode.IfSame
                 && currentJdkToolchain != null
                 && Objects.equals(getJdkHome(currentJdkToolchain), getJdkHome(toolchain))) {
-            getLog().info("Not using an external toolchain as the current JDK '" + currentJdkToolchain
+            log.info("Not using an external toolchain as the current JDK '" + currentJdkToolchain
                     + "' has been selected.");
             return;
         }
 
-        toolchainManager.storeToolchainToBuildContext(toolchain, session);
-        getLog().info("Selected JDK toolchain: " + toolchain);
+        toolchainManager.storeToolchainToBuildContext(session, toolchain);
+        log.info("Selected JDK toolchain: " + toolchain);
     }
 
-    private boolean matches(ToolchainPrivate tc, Map<String, String> requirements) {
+    private boolean matches(Toolchain tc, Map<String, String> requirements) {
         ToolchainModel model = tc.getModel();
         for (Map.Entry<String, String> req : requirements.entrySet()) {
             String key = req.getKey();
             String reqVal = req.getValue();
-            String tcVal = model.getProvides().getProperty(key);
+            String tcVal = model.getProvides().get(key);
             if (tcVal == null) {
-                getLog().debug("Toolchain " + tc + " is missing required property: " + key);
+                log.debug("Toolchain " + tc + " is missing required property: " + key);
                 return false;
             }
             if (!matches(key, reqVal, tcVal)) {
-                getLog().debug("Toolchain " + tc + " doesn't match required property: " + key);
+                log.debug("Toolchain " + tc + " doesn't match required property: " + key);
                 return false;
             }
         }
@@ -253,17 +241,65 @@ public class SelectJdkToolchainMojo extends AbstractMojo {
     private boolean matches(String key, String reqVal, String tcVal) {
         switch (key) {
             case VERSION:
-                return RequirementMatcherFactory.createVersionMatcher(tcVal).matches(reqVal);
+                try {
+                    return session.parseVersionConstraint(reqVal).contains(session.parseVersion(tcVal));
+                } catch (RuntimeException e) {
+                    return false;
+                }
             case ENV:
                 return tcVal.matches("(.*,|^)\\Q" + reqVal + "\\E(,.*|$)");
             default:
-                return RequirementMatcherFactory.createExactMatcher(tcVal).matches(reqVal);
+                return tcVal.equalsIgnoreCase(reqVal);
         }
     }
 
-    private String getJdkHome(ToolchainPrivate toolchain) {
-        return ((Xpp3Dom) toolchain.getModel().getConfiguration())
-                .getChild("jdkHome")
-                .getValue();
+    private String getJdkHome(Toolchain toolchain) {
+        return toolchain.getModel().getConfiguration().child("jdkHome").value();
+    }
+
+    /**
+     * A JDK toolchain backed by a toolchain model only: the Maven 4 API has no way to ask the core {@code jdk}
+     * factory for a {@link Toolchain}, and the build context only keeps the model of the stored toolchain.
+     */
+    private static final class JdkToolchain implements Toolchain {
+        private final ToolchainModel model;
+
+        JdkToolchain(ToolchainModel model) {
+            this.model = model;
+        }
+
+        @Override
+        public String getType() {
+            return TOOLCHAIN_TYPE_JDK;
+        }
+
+        @Override
+        public ToolchainModel getModel() {
+            return model;
+        }
+
+        @Override
+        public String findTool(String toolName) {
+            Path bin =
+                    Paths.get(model.getConfiguration().child("jdkHome").value()).resolve("bin");
+            for (String name : new String[] {toolName, toolName + ".exe"}) {
+                if (Files.exists(bin.resolve(name))) {
+                    return bin.resolve(name).toAbsolutePath().toString();
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public boolean matchesRequirements(Map<String, String> requirements) {
+            return requirements.entrySet().stream()
+                    .allMatch(e ->
+                            e.getValue().equalsIgnoreCase(model.getProvides().get(e.getKey())));
+        }
+
+        @Override
+        public String toString() {
+            return "JDK[" + model.getConfiguration().child("jdkHome").value() + "]";
+        }
     }
 }

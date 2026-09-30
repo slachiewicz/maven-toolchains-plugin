@@ -18,16 +18,14 @@
  */
 package org.apache.maven.plugins.toolchain.jdk;
 
-import javax.inject.Inject;
-
 import java.util.List;
 
-import org.apache.maven.plugin.AbstractMojo;
-import org.apache.maven.plugins.annotations.Mojo;
-import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.toolchain.model.PersistedToolchains;
-import org.apache.maven.toolchain.model.ToolchainModel;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.apache.maven.api.di.Inject;
+import org.apache.maven.api.plugin.Log;
+import org.apache.maven.api.plugin.Mojo;
+import org.apache.maven.api.plugin.annotations.Parameter;
+import org.apache.maven.api.toolchain.PersistedToolchains;
+import org.apache.maven.api.toolchain.ToolchainModel;
 
 import static java.util.Comparator.comparing;
 import static org.apache.maven.plugins.toolchain.jdk.ToolchainDiscoverer.SORTED_PROVIDES;
@@ -37,8 +35,11 @@ import static org.apache.maven.plugins.toolchain.jdk.ToolchainDiscoverer.SORTED_
  *
  * @since 3.2.0
  */
-@Mojo(name = "display-discovered-jdk-toolchains", requiresProject = false)
-public class DisplayDiscoveredJdkToolchainsMojo extends AbstractMojo {
+@org.apache.maven.api.plugin.annotations.Mojo(name = "display-discovered-jdk-toolchains", projectRequired = false)
+public class DisplayDiscoveredJdkToolchainsMojo implements Mojo {
+
+    @Inject
+    Log log;
 
     /**
      * Comparator used to sort JDK toolchains for selection.
@@ -64,14 +65,13 @@ public class DisplayDiscoveredJdkToolchainsMojo extends AbstractMojo {
     public void execute() {
         PersistedToolchains toolchains = discoverer.discoverToolchains(comparator);
         List<ToolchainModel> models = toolchains.getToolchains();
-        getLog().info("Discovered " + models.size() + " JDK toolchains:");
+        log.info("Discovered " + models.size() + " JDK toolchains:");
         for (ToolchainModel model : models) {
-            getLog().info("  - "
-                    + ((Xpp3Dom) model.getConfiguration()).getChild("jdkHome").getValue());
-            getLog().info("    provides:");
+            log.info("  - " + model.getConfiguration().child("jdkHome").value());
+            log.info("    provides:");
             model.getProvides().entrySet().stream()
-                    .sorted(comparing(e -> SORTED_PROVIDES.indexOf(e.getKey().toString())))
-                    .forEach(e -> getLog().info("      " + e.getKey() + ": " + e.getValue()));
+                    .sorted(comparing(e -> SORTED_PROVIDES.indexOf(e.getKey())))
+                    .forEach(e -> log.info("      " + e.getKey() + ": " + e.getValue()));
         }
     }
 }

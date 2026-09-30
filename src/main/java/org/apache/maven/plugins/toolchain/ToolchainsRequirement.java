@@ -19,17 +19,37 @@
 package org.apache.maven.plugins.toolchain;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.maven.api.xml.XmlNode;
+
 /**
- * Type for plugin's <code>toolchain</code> attribute representing toolchains requirements.
- *
- * @author mkleint
- * @see ToolchainConverter the custom Plexus converter to instantiate this class
+ * The toolchain requirements of the {@code toolchain} goal, one entry per toolchain type.
  */
 public final class ToolchainsRequirement {
-    Map<String, Map<String, String>> toolchains;
+    private final Map<String, Map<String, String>> toolchains;
+
+    private ToolchainsRequirement(Map<String, Map<String, String>> toolchains) {
+        this.toolchains = toolchains;
+    }
+
+    /**
+     * Reads the requirements from the {@code toolchains} configuration element: each child is a toolchain type
+     * and each grand-child a required parameter.
+     */
+    public static ToolchainsRequirement fromXmlNode(XmlNode configuration) {
+        Map<String, Map<String, String>> map = new LinkedHashMap<>();
+        for (XmlNode tool : configuration.children()) {
+            Map<String, String> parameters = new LinkedHashMap<>();
+            for (XmlNode param : tool.children()) {
+                parameters.put(param.name(), param.value());
+            }
+            map.put(tool.name(), parameters);
+        }
+        return new ToolchainsRequirement(map);
+    }
 
     public Map<String, Map<String, String>> getToolchains() {
         return Collections.unmodifiableMap(toolchains);

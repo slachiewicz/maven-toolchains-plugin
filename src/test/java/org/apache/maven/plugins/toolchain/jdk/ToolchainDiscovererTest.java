@@ -23,8 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import org.apache.maven.toolchain.model.PersistedToolchains;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.apache.maven.api.toolchain.PersistedToolchains;
+import org.apache.maven.impl.DefaultToolchainsXmlFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnJre;
 import org.junit.jupiter.api.condition.JRE;
@@ -43,13 +43,12 @@ public class ToolchainDiscovererTest {
     @Test
     @DisabledOnJre(JRE.JAVA_8) // java 8 often has jdk != jre
     void testDiscovery() {
-        ToolchainDiscoverer discoverer = new ToolchainDiscoverer();
+        ToolchainDiscoverer discoverer = new ToolchainDiscoverer(new DefaultToolchainsXmlFactory());
         PersistedToolchains persistedToolchains = discoverer.discoverToolchains();
         assertNotNull(persistedToolchains);
 
         persistedToolchains.getToolchains().forEach(model -> {
-            logger.info("  - "
-                    + ((Xpp3Dom) model.getConfiguration()).getChild("jdkHome").getValue());
+            logger.info("  - " + model.getConfiguration().child("jdkHome").value());
             logger.info("    provides:");
             model.getProvides().forEach((k, v) -> logger.info("      " + k + ": " + v));
         });
@@ -72,7 +71,8 @@ public class ToolchainDiscovererTest {
         String originalUserHome = System.getProperty(ToolchainDiscoverer.USER_HOME);
         System.setProperty(ToolchainDiscoverer.USER_HOME, tempDir.toString());
         try {
-            PersistedToolchains toolchains = new ToolchainDiscoverer().discoverToolchains();
+            PersistedToolchains toolchains =
+                    new ToolchainDiscoverer(new DefaultToolchainsXmlFactory()).discoverToolchains();
             assertTrue(toolchains.getToolchains().stream()
                     .anyMatch(tc -> tc.getProvides().containsKey(CURRENT)));
         } finally {
