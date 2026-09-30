@@ -20,4 +20,4 @@
 content = new File(basedir, 'build.log').text
 
 // property is resolved
-assert content.contains('[DEBUG]   (f) toolchains = ToolchainsRequirement{toolchains={jdk={version=[8,17]}}}')
+assert content.contains("[INFO] Required toolchain: jdk [ version='[8,17]' ]")

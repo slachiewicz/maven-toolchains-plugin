@@ -18,8 +18,8 @@
  */
 package org.apache.maven.plugins.toolchain.jdk;
 
-import org.apache.maven.toolchain.model.PersistedToolchains;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.apache.maven.api.toolchain.PersistedToolchains;
+import org.apache.maven.impl.DefaultToolchainsXmlFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnJre;
 import org.junit.jupiter.api.condition.JRE;
@@ -37,13 +37,12 @@ public class ToolchainDiscovererTest {
     @Test
     @DisabledOnJre(JRE.JAVA_8) // java 8 often has jdk != jre
     void testDiscovery() {
-        ToolchainDiscoverer discoverer = new ToolchainDiscoverer();
+        ToolchainDiscoverer discoverer = new ToolchainDiscoverer(new DefaultToolchainsXmlFactory());
         PersistedToolchains persistedToolchains = discoverer.discoverToolchains();
         assertNotNull(persistedToolchains);
 
         persistedToolchains.getToolchains().forEach(model -> {
-            logger.info("  - "
-                    + ((Xpp3Dom) model.getConfiguration()).getChild("jdkHome").getValue());
+            logger.info("  - " + model.getConfiguration().child("jdkHome").value());
             logger.info("    provides:");
             model.getProvides().forEach((k, v) -> logger.info("      " + k + ": " + v));
         });

@@ -19,30 +19,48 @@
 package org.apache.maven.plugins.toolchains.its.custom;
 
 import java.io.File;
+import java.util.Map;
 
-import org.apache.maven.toolchain.DefaultToolchain;
-import org.apache.maven.toolchain.model.ToolchainModel;
-import org.codehaus.plexus.logging.Logger;
+import org.apache.maven.api.toolchain.ToolchainModel;
 import org.codehaus.plexus.util.Os;
 
 /**
  * @author Hervé Boutemy
  */
-public class CustomToolchainImpl extends DefaultToolchain implements CustomToolchain {
-    private String toolHome;
-
+public class CustomToolchainImpl implements CustomToolchain {
     public static final String KEY_TOOLHOME = "toolHome";
 
-    public CustomToolchainImpl(ToolchainModel model, Logger logger) {
-        super(model, "custom", logger);
+    private final ToolchainModel model;
+
+    private final Map<String, String> provides;
+
+    private final String toolHome;
+
+    public CustomToolchainImpl(ToolchainModel model, Map<String, String> provides, String toolHome) {
+        this.model = model;
+        this.provides = provides;
+        this.toolHome = toolHome;
     }
 
     public String getToolHome() {
         return toolHome;
     }
 
-    public void setToolHome(String toolHome) {
-        this.toolHome = toolHome;
+    public String getType() {
+        return "custom";
+    }
+
+    public ToolchainModel getModel() {
+        return model;
+    }
+
+    public boolean matchesRequirements(Map<String, String> requirements) {
+        for (Map.Entry<String, String> requirement : requirements.entrySet()) {
+            if (!requirement.getValue().equalsIgnoreCase(provides.get(requirement.getKey()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public String toString() {
